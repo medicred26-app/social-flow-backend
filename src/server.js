@@ -51,7 +51,7 @@ app.get('/api/health', (req, res) => {
   const payload = {
     status: 'online',
     service: 'SocialFlow Backend API Server',
-    version: '2.5.0 (Unified Content Studio, Library, Services & Publishing Platform)',
+    version: '2.6.0 (Script-to-publish video pipeline)',
     timestamp: new Date().toISOString(),
     platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin'],
     googleOauthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),

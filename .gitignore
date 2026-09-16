@@ -8,3 +8,4 @@ supabase/.temp/
 *.log
 *.zip
 _zip_inspect/
+_zip_env/

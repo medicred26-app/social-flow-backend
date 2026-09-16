@@ -53,7 +53,14 @@ router.get('/video/jobs/:id', (req, res) => {
     return res.json({ success: false, jobId: job.id, status: job.status, error: job.error });
   }
   if (job.status !== 'done') {
-    return res.json({ success: true, jobId: job.id, status: job.status });
+    return res.json({
+      success: true,
+      jobId: job.id,
+      status: job.status,
+      stage: job.stage,
+      stages: job.stages,
+      message: job.message,
+    });
   }
   return res.json({ success: true, jobId: job.id, status: 'done', ...job.result });
 });
@@ -73,9 +80,16 @@ router.post('/video/generate', async (req, res) => {
     res.json({ success: true, jobId, status: 'queued' });
     setImmediate(async () => {
       try {
-        updateVideoJob(jobId, { status: 'running' });
-        const data = await aiService.generateVideo(req.body || {});
-        updateVideoJob(jobId, { status: 'done', result: data });
+        updateVideoJob(jobId, { status: 'running', stage: 'input', message: 'Starting video pipeline...' });
+        const data = await aiService.generateVideo(req.body || {}, (progress) => {
+          updateVideoJob(jobId, {
+            status: 'running',
+            stage: progress.stage,
+            stages: progress.stages,
+            message: progress.message,
+          });
+        });
+        updateVideoJob(jobId, { status: 'done', stage: 'publish', stages: data.pipeline?.stages, result: data });
       } catch (err) {
         updateVideoJob(jobId, { status: 'error', error: err.message || 'Video generation failed.' });
       }

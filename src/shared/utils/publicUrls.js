@@ -13,14 +13,24 @@ export function isProduction() {
   return process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
 }
 
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
 export function getAppUrl() {
-  const configured = stripSlash(
-    process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL
-  );
+  const renderUrl = stripSlash(process.env.RENDER_EXTERNAL_URL);
+  const configured = stripSlash(process.env.APP_URL || process.env.BACKEND_URL);
+  if (isProduction() && renderUrl && !isLocalHost(renderUrl)) {
+    return renderUrl;
+  }
   if (isProduction() && isLocalHost(configured)) {
     return PROD_API;
   }
-  return configured || 'http://localhost:5000';
+  return configured || renderUrl || 'http://localhost:5000';
 }
 
 export function getFrontendUrl(req) {
@@ -39,10 +49,10 @@ export function getFrontendUrl(req) {
 export function resolveRedirectUri(configured, path) {
   const appUrl = getAppUrl();
   const value = stripSlash(configured);
-  if (isProduction() && isLocalHost(value)) {
+  if (!value || (isProduction() && (isLocalHost(value) || (hostOf(value) && hostOf(value) !== hostOf(appUrl))))) {
     return `${appUrl}${path}`;
   }
-  return value || `${appUrl}${path}`;
+  return value;
 }
 
 export function encodeOAuthState(req, extra = {}) {

@@ -1,4 +1,5 @@
-import { callLlmProvider, generateGeminiImage, generateGeminiVideo } from './ai.provider.js';
+import { callLlmProvider, generateGeminiImage } from './ai.provider.js';
+import { runVideoPipeline } from './ai.pipeline.js';
 import { supabase } from '../shared/utils/supabase.js';
 import { createLogger } from '../middleware/logger.js';
 
@@ -197,84 +198,23 @@ STRICT JSON OUTPUT FORMAT ONLY:
     };
   }
 
-  async generateVideo({ prompt, aspectRatio = '9:16', durationSeconds = 8, userId = 'demo-user' }) {
-    if (!prompt?.trim()) {
-      throw new Error('A video prompt is required.');
-    }
-
-    try {
-      const video = await generateGeminiVideo({ prompt, aspectRatio, durationSeconds });
-      const captions = await this.generateCaption({ topic: prompt, platform: 'instagram' }).catch(() => ({}));
-      this.recordGeneration({
-        userId,
-        type: 'video_generator',
-        platform: 'instagram',
-        tone: 'cinematic',
-        goal: 'engagement',
-        inputContent: prompt,
-        outputContent: { model: video.model, aspectRatio },
-      }).catch((err) => logger.warn('DB record error:', err.message));
-      return {
-        provider: video.model,
-        mediaType: 'video',
-        videoUrl: video.videoUrl,
-        sourceUri: video.sourceUri,
-        aspectRatio,
-        durationSeconds: video.durationSeconds,
-        caption: captions.caption,
-        hook: captions.hook,
-        cta: captions.cta,
-        hashtags: captions.hashtags,
-        message: `Generated AI video with ${video.model}.`,
-      };
-    } catch (videoErr) {
-      logger.warn('Cinematic video unavailable, building a motion storyboard:', videoErr.message);
-      const [image, script] = await Promise.all([
-        generateGeminiImage({ prompt, aspectRatio }).catch(() => null),
-        callLlmProvider({
-          systemPrompt: `Create a short-form social video package.
-STRICT JSON OUTPUT FORMAT ONLY:
-{
-  "title":"6 word title",
-  "script":"shot-by-shot 12s script",
-  "caption":"publish-ready caption",
-  "hook":"first line",
-  "cta":"call to action",
-  "hashtags":["tag1","tag2"],
-  "scenes":[
-    {"heading":"HOOK","line":"on-screen text","visual":"what the viewer sees","color":"#4f46e5"},
-    {"heading":"PROBLEM","line":"on-screen text","visual":"what the viewer sees","color":"#7c3aed"},
-    {"heading":"PAYOFF","line":"on-screen text","visual":"what the viewer sees","color":"#db2777"},
-    {"heading":"CTA","line":"on-screen text","visual":"what the viewer sees","color":"#059669"}
-  ]
-}`,
-          userPrompt: `Video concept: ${prompt}\nAspect: ${aspectRatio}`,
-        }),
-      ]);
-      if (!image && !script) {
-        throw videoErr;
-      }
-      return {
-        provider: image ? 'gemini-image-storyboard' : 'gemini-motion-storyboard',
-        mediaType: image ? 'image' : 'storyboard',
-        videoUrl: image?.imageUrl || '',
-        thumbnailUrl: image?.imageUrl || '',
-        aspectRatio,
-        durationSeconds,
-        caption: script.caption,
-        hook: script.hook,
-        cta: script.cta,
-        hashtags: script.hashtags,
-        script: script.script,
-        storyboard: {
-          title: script.title || 'SocialFlow Reel',
-          scenes: Array.isArray(script.scenes) ? script.scenes : [],
-        },
-        message: image
-          ? 'Cinematic video quota is used up, so Gemini returned a storyboard image and script.'
-          : 'Cinematic Veo/Omni quota is used up on this key. Gemini wrote a motion storyboard you can play as a reel.',
-      };
-    }
+  async generateVideo(input = {}, onProgress) {
+    const data = await runVideoPipeline(input, onProgress);
+    this.recordGeneration({
+      userId: input.userId || 'demo-user',
+      type: 'video_pipeline',
+      platform: (input.platforms && input.platforms[0]) || 'instagram',
+      tone: input.tone || 'energetic',
+      goal: 'engagement',
+      inputContent: input.script || input.prompt,
+      outputContent: {
+        provider: data.provider,
+        mediaType: data.mediaType,
+        title: data.storyboard?.title,
+        stages: data.pipeline?.stages?.map((stage) => stage.id),
+      },
+    }).catch((err) => logger.warn('DB record error:', err.message));
+    return data;
   }
 
   async generateThumbnail({ title, prompt, aspectRatio = '16:9' }) {

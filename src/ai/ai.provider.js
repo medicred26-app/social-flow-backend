@@ -307,6 +307,7 @@ async function generateOmniVideo({ prompt, aspectRatio, durationSeconds }) {
       if (!start.ok) {
         lastError = mapHttpError(start.status, startText);
         logger.warn(`Omni ${model} failed: ${startText.slice(0, 240)}`);
+        if (start.status === 429) throw lastError;
         continue;
       }
 
@@ -392,6 +393,7 @@ async function generateVeoVideo({ prompt, aspectRatio, durationSeconds }) {
       if (!start.ok) {
         lastError = mapHttpError(start.status, startText);
         logger.warn(`Veo model ${model} failed: ${startText.slice(0, 240)}`);
+        if (start.status === 429) throw lastError;
         continue;
       }
 
@@ -482,6 +484,53 @@ export async function generateGeminiImage({ prompt, aspectRatio = '1:1' }) {
   throw lastError || new AiApiError('Gemini image generation is not available for this API key.');
 }
 
+export async function generateGeminiSpeech({ text, language = 'English' }) {
+  const spoken = String(text || '').trim();
+  if (!spoken) {
+    throw new AiApiError('Voiceover text is required.');
+  }
+  const models = [
+    process.env.GEMINI_TTS_MODEL,
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
+  ].filter(Boolean);
+  let lastError;
+  for (const model of [...new Set(models)]) {
+    try {
+      const result = await callGeminiContent({
+        systemPrompt: `Speak the user's script clearly in ${language}. Do not add extra words.`,
+        userPrompt: spoken.slice(0, 1200),
+        responseFormat: 'text',
+        model,
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
+            },
+          },
+        },
+      });
+      const audioPart = result.raw?.candidates?.[0]?.content?.parts?.find(
+        (part) => part.inlineData?.data && String(part.inlineData.mimeType || '').startsWith('audio')
+      );
+      if (audioPart?.inlineData?.data) {
+        const mimeType = audioPart.inlineData.mimeType || 'audio/mp3';
+        return {
+          audioUrl: persistVideoBuffer(Buffer.from(audioPart.inlineData.data, 'base64'), mimeType),
+          model,
+          mimeType,
+        };
+      }
+      lastError = new AiApiError('Gemini TTS returned no audio.');
+    } catch (err) {
+      lastError = err;
+      logger.warn(`TTS model ${model} failed: ${err.message}`);
+    }
+  }
+  throw lastError || new AiApiError('Gemini speech is not available for this API key.');
+}
+
 export async function generateGeminiVideo({ prompt, aspectRatio = '9:16', durationSeconds = 8 }) {
   let lastError;
   try {
@@ -489,6 +538,9 @@ export async function generateGeminiVideo({ prompt, aspectRatio = '9:16', durati
   } catch (err) {
     lastError = err;
     logger.warn(`Omni video unavailable: ${err.message}`);
+    if (/no video\/image quota|limit: 0/i.test(err.message || '')) {
+      throw lastError;
+    }
   }
   try {
     return await generateVeoVideo({ prompt, aspectRatio, durationSeconds });

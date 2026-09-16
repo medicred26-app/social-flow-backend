@@ -1,3 +1,5 @@
+import { createPipelineStages } from './ai.stages.js';
+
 const jobs = new Map();
 const media = new Map();
 const MAX_JOBS = 40;
@@ -15,6 +17,9 @@ export function createVideoJob() {
   jobs.set(id, {
     id,
     status: 'queued',
+    stage: 'queued',
+    stages: createPipelineStages(),
+    message: 'Queued for the video pipeline.',
     createdAt: Date.now(),
     result: null,
     error: null,
