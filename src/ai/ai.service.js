@@ -1,4 +1,4 @@
-import { callLlmProvider, generateGeminiImage, generateGeminiVideo } from './ai.provider.js';
+import { callLlmProvider, AiConfigError, AiApiError } from './ai.provider.js';
 import { supabase } from '../shared/utils/supabase.js';
 import { createLogger } from '../middleware/logger.js';
 
@@ -188,81 +188,11 @@ STRICT JSON OUTPUT FORMAT ONLY:
    */
   async calculateBestTimes({ timezone = 'UTC' }) {
     return {
-      timezone,
       facebook: { best_days: ['Wednesday', 'Friday'], optimal_time: '1:00 PM', engagement_lift: '+24%' },
       instagram: { best_days: ['Monday', 'Wednesday', 'Thursday'], optimal_time: '11:00 AM & 7:00 PM', engagement_lift: '+38%' },
       youtube: { best_days: ['Thursday', 'Friday', 'Saturday'], optimal_time: '3:00 PM', engagement_lift: '+31%' },
       x: { best_days: ['Tuesday', 'Wednesday'], optimal_time: '9:00 AM', engagement_lift: '+18%' },
       linkedin: { best_days: ['Tuesday', 'Wednesday', 'Thursday'], optimal_time: '8:00 AM & 12:00 PM', engagement_lift: '+42%' }
-    };
-  }
-
-  async generateVideo({ prompt, aspectRatio = '9:16', durationSeconds = 8, userId = 'demo-user' }) {
-    if (!prompt?.trim()) {
-      throw new Error('A video prompt is required.');
-    }
-
-    try {
-      const video = await generateGeminiVideo({ prompt, aspectRatio, durationSeconds });
-      const captions = await this.generateCaption({ topic: prompt, platform: 'instagram' }).catch(() => ({}));
-      this.recordGeneration({
-        userId,
-        type: 'video_generator',
-        platform: 'instagram',
-        tone: 'cinematic',
-        goal: 'engagement',
-        inputContent: prompt,
-        outputContent: { model: video.model, aspectRatio },
-      }).catch((err) => logger.warn('DB record error:', err.message));
-      return {
-        provider: video.model,
-        videoUrl: video.videoUrl,
-        sourceUri: video.sourceUri,
-        aspectRatio,
-        durationSeconds: video.durationSeconds,
-        caption: captions.caption,
-        hook: captions.hook,
-        cta: captions.cta,
-        hashtags: captions.hashtags,
-        message: 'Generated AI video with Gemini Veo.',
-      };
-    } catch (videoErr) {
-      logger.warn('Veo unavailable, generating a still + script:', videoErr.message);
-      const [image, script] = await Promise.all([
-        generateGeminiImage({ prompt, aspectRatio }).catch(() => null),
-        callLlmProvider({
-          systemPrompt: `Write a ready-to-shoot short-form video package.
-STRICT JSON OUTPUT FORMAT ONLY:
-{"script":"shot-by-shot 15s script","caption":"publish-ready caption","hook":"first line","cta":"call to action","hashtags":["tag1","tag2"]}`,
-          userPrompt: `Video concept: ${prompt}\nAspect: ${aspectRatio}`,
-        }),
-      ]);
-      if (!image && !script) {
-        throw videoErr;
-      }
-      return {
-        provider: 'gemini-fallback-storyboard',
-        videoUrl: image?.imageUrl || '',
-        thumbnailUrl: image?.imageUrl || '',
-        aspectRatio,
-        durationSeconds,
-        caption: script.caption,
-        hook: script.hook,
-        cta: script.cta,
-        hashtags: script.hashtags,
-        script: script.script,
-        message: `Veo video is not enabled for this key (${videoErr.message}). Generated a Gemini storyboard image and script instead.`,
-      };
-    }
-  }
-
-  async generateThumbnail({ title, prompt, aspectRatio = '16:9' }) {
-    const imagePrompt = prompt || `High-CTR YouTube/social thumbnail, bold readable title text "${title || 'SocialFlow'}", dramatic lighting, no clutter`;
-    const image = await generateGeminiImage({ prompt: imagePrompt, aspectRatio });
-    return {
-      provider: image.model,
-      thumbnailUrl: image.imageUrl,
-      title: title || 'AI Thumbnail',
     };
   }
 

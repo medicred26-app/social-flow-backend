@@ -1,17 +1,82 @@
 import { Router } from 'express';
+import { supabase } from '../shared/utils/supabase.js';
 
 const router = Router();
 
-// In-memory user store for backend demonstration (persistable to Firebase/DB)
+// Helper for resilient Supabase queries with 1.5s timeout
+async function withTimeout(promise, ms = 1500) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase request timeout')), ms))
+  ]);
+}
+
+// In-memory user store (fallback when Supabase unavailable)
 const usersDb = [
   {
     id: 'user_1',
     email: 'demo@socialflow.app',
     name: 'Demo Creator',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
-    provider: 'email'
+    provider: 'email',
+    role: 'customer'
   }
 ];
+
+/**
+ * Look up a user by email from Supabase. Returns null if not found or Supabase unavailable.
+ */
+async function findUserByEmail(email) {
+  try {
+    if (supabase) {
+      const { data, error } = await withTimeout(
+        supabase
+          .from('users')
+          .select('*')
+          .eq('email', email.toLowerCase())
+          .maybeSingle()
+      );
+      if (!error && data) return data;
+    }
+  } catch (_) {}
+  return usersDb.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
+}
+
+/**
+ * Upsert (create or update) a user in Supabase + memory store.
+ */
+async function upsertUser({ id, email, name, avatar, provider, role }) {
+  const userData = {
+    id,
+    email: email.toLowerCase(),
+    name: name || email.split('@')[0],
+    avatar: avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
+    provider: provider || 'email',
+    role: role || 'customer',
+    updated_at: new Date().toISOString()
+  };
+
+  // Upsert to Supabase (by id)
+  try {
+    if (supabase) {
+      await supabase.from('users').upsert(
+        { ...userData, created_at: new Date().toISOString() },
+        { onConflict: 'id', ignoreDuplicates: false }
+      );
+    }
+  } catch (err) {
+    console.warn('[Auth] Could not upsert user to Supabase:', err.message);
+  }
+
+  // Sync memory store
+  const idx = usersDb.findIndex(u => u.id === id || u.email.toLowerCase() === email.toLowerCase());
+  if (idx >= 0) {
+    usersDb[idx] = { ...usersDb[idx], ...userData };
+    return usersDb[idx];
+  }
+  usersDb.push(userData);
+  return userData;
+}
 
 // GET Google Auth Config
 router.get('/google-config', (req, res) => {
@@ -24,71 +89,116 @@ router.get('/google-config', (req, res) => {
 });
 
 // POST Login Endpoint
-router.post('/login', (req, res) => {
-  const { email, password } = req.body;
+router.post('/login', async (req, res) => {
+  const { email, password, role } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Email and password are required.' });
   }
 
-  let user = usersDb.find(u => u.email.toLowerCase() === email.toLowerCase());
-  
+  // Look up user by email (Supabase first, then memory fallback)
+  let user = await findUserByEmail(email);
+
   if (!user) {
-    // Auto create demo account for seamless developer onboarding
-    user = {
-      id: `user_${Date.now()}`,
+    // Auto-create account on first login
+    const newId = `user_${Date.now()}`;
+    user = await upsertUser({
+      id: newId,
       email,
       name: email.split('@')[0].replace(/[^a-zA-Z0-9]/g, ' '),
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-      provider: 'email'
-    };
-    usersDb.push(user);
+      provider: 'email',
+      role: role || 'customer'
+    });
+  }
+
+  // If role is provided and differs, update it
+  if (role && user.role !== role) {
+    user = await upsertUser({ ...user, role });
   }
 
   const token = `sf_jwt_token_${user.id}_${Date.now()}`;
-
-  return res.json({
-    success: true,
-    message: 'Login successful',
-    token,
-    user
-  });
+  return res.json({ success: true, message: 'Login successful', token, user });
 });
 
 // POST Signup Endpoint
-router.post('/signup', (req, res) => {
-  const { email, password, name } = req.body;
+router.post('/signup', async (req, res) => {
+  const { email, password, name, role } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Email and password are required.' });
   }
 
-  const existing = usersDb.find(u => u.email.toLowerCase() === email.toLowerCase());
+  // Check for existing user
+  const existing = await findUserByEmail(email);
   if (existing) {
-    return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
+    // Treat as login if already exists (idempotent signup)
+    const token = `sf_jwt_token_${existing.id}_${Date.now()}`;
+    return res.json({ success: true, message: 'Account already exists, logged in.', token, user: existing });
   }
 
-  const newUser = {
+  const newUser = await upsertUser({
     id: `user_${Date.now()}`,
     email,
     name: name || email.split('@')[0],
-    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-    provider: 'email'
-  };
-
-  usersDb.push(newUser);
-  const token = `sf_jwt_token_${newUser.id}_${Date.now()}`;
-
-  return res.status(201).json({
-    success: true,
-    message: 'Account created successfully',
-    token,
-    user: newUser
+    provider: 'email',
+    role: role || 'customer'
   });
+
+  const token = `sf_jwt_token_${newUser.id}_${Date.now()}`;
+  return res.status(201).json({ success: true, message: 'Account created successfully', token, user: newUser });
+});
+
+// POST Send OTP via EmailJS Endpoint
+router.post('/send-otp', async (req, res) => {
+  const { email, name, otp } = req.body;
+  if (!email || !otp) {
+    return res.status(400).json({ success: false, message: 'Email and OTP code are required.' });
+  }
+
+  const serviceId = process.env.EMAILJS_SERVICE_ID || 'service_ju07k4r';
+  const templateId = process.env.EMAILJS_TEMPLATE_ID || 'template_scew9gb';
+  const publicKey = process.env.EMAILJS_PUBLIC_KEY || 'otVTMOVNTqwtD8-kl';
+
+  try {
+    const payload = {
+      service_id: serviceId,
+      template_id: templateId,
+      user_id: publicKey,
+      template_params: {
+        to_email: email,
+        to_name: name || email.split('@')[0],
+        user_name: name || email.split('@')[0],
+        email: email,
+        user_email: email,
+        otp: otp,
+        passcode: otp,
+        code: otp,
+        verification_code: otp,
+        otp_code: otp
+      }
+    };
+
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      return res.json({ success: true, message: `OTP verification email sent to ${email}` });
+    }
+
+    const errorText = await response.text();
+    console.error('[EmailJS Backend] Error from EmailJS API:', errorText);
+    return res.status(500).json({ success: false, message: errorText || 'Failed to send OTP email.' });
+  } catch (err) {
+    console.error('[EmailJS Backend] Exception sending OTP:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // POST Google OAuth Login / Verify Endpoint
-router.post('/google', (req, res) => {
+router.post('/google', async (req, res) => {
   const { credential, clientId, user: googleUser } = req.body;
 
   if (!credential && !googleUser && !clientId) {
@@ -98,60 +208,49 @@ router.post('/google', (req, res) => {
   let email = googleUser?.email;
   let name = googleUser?.name;
   let avatar = googleUser?.picture;
+  let googleId = googleUser?.id;
 
-  // If JWT credential passed from Google Identity Services script:
+  // If JWT credential passed from Google Identity Services:
   if (credential && typeof credential === 'string') {
     try {
-      // Decode JWT payload (standard base64 json decode of token payload)
       const base64Url = credential.split('.')[1];
       if (base64Url) {
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = decodeURIComponent(
-          atob(base64)
-            .split('')
-            .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-            .join('')
+          atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
         );
         const payload = JSON.parse(jsonPayload);
         email = payload.email || email;
         name = payload.name || name;
         avatar = payload.picture || avatar;
+        googleId = payload.sub || googleId;
       }
     } catch (e) {
-      console.warn('Failed to parse Google JWT payload directly, relying on provided attributes:', e);
+      console.warn('Failed to parse Google JWT payload:', e);
     }
   }
 
-  if (!email) {
-    email = `google_user_${Date.now()}@socialflow.app`;
-  }
+  if (!email) email = `google_user_${Date.now()}@socialflow.app`;
 
-  let user = usersDb.find(u => u.email.toLowerCase() === email.toLowerCase());
+  // Look up existing user by email
+  let user = await findUserByEmail(email);
 
   if (!user) {
-    user = {
-      id: `google_user_${Date.now()}`,
+    user = await upsertUser({
+      id: googleId || `google_user_${Date.now()}`,
       email,
       name: name || 'Google User',
       avatar: avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-      provider: 'google'
-    };
-    usersDb.push(user);
+      provider: 'google',
+      role: 'customer'
+    });
   } else {
-    // Update profile info
-    user.name = name || user.name;
-    user.avatar = avatar || user.avatar;
-    user.provider = 'google';
+    // Update Google profile fields
+    user = await upsertUser({ ...user, name: name || user.name, avatar: avatar || user.avatar, provider: 'google' });
   }
 
   const token = `sf_google_token_${user.id}_${Date.now()}`;
-
-  return res.json({
-    success: true,
-    message: 'Google Sign-In successful',
-    token,
-    user
-  });
+  return res.json({ success: true, message: 'Google Sign-In successful', token, user });
 });
 
 // GET Initiates Facebook OAuth 2.0 Login (Forward to independent Facebook platform router)

@@ -12,6 +12,7 @@ import xRouter from './platforms/x/x.router.js';
 import linkedinRouter from './platforms/linkedin/linkedin.router.js';
 import aiRouter from './ai/ai.router.js';
 import marketplaceRouter from './marketplace/marketplace.router.js';
+import messagingRouter from './messaging/messaging.router.js';
 
 import libraryRoutes from './routes/library.js';
 import servicesRoutes from './routes/services.js';
@@ -44,8 +45,7 @@ app.get('/api/health', (req, res) => {
     version: '2.5.0 (Unified Content Studio, Library, Services & Publishing Platform)',
     timestamp: new Date().toISOString(),
     platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin'],
-    googleOauthConfigured: !!process.env.GOOGLE_CLIENT_ID,
-    geminiConfigured: !!(process.env.GEMINI_API_KEY || process.env.AI_API_KEY),
+    googleOauthConfigured: !!process.env.GOOGLE_CLIENT_ID
   });
 });
 
@@ -54,15 +54,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/posts', postsRoutes);
 app.use('/api/accounts', accountsRoutes);
 app.use('/api/analytics', analyticsRoutes);
-app.use('/api/ai', (req, res, next) => {
-  req.setTimeout(190000);
-  res.setTimeout(190000);
-  next();
-}, aiRouter);
+app.use('/api/ai', aiRouter);
 app.use('/api/library', libraryRoutes);
 app.use('/api/services', servicesRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/marketplace', marketplaceRouter);
+app.use('/api/messages', messagingRouter);
 
 
 // Independent Platform Routes

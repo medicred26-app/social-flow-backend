@@ -1,6 +1,13 @@
 // Shared persistence helper for users & connected social accounts
 import { supabase } from './supabase.js';
 
+async function withTimeout(promise, ms = 1500) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase request timeout')), ms))
+  ]);
+}
+
 const usersDb = [
   {
     id: 'user_1',
@@ -93,7 +100,7 @@ export async function getAccountCredentials(platform, accountId = null) {
         query = query.eq('account_id', accountId);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await withTimeout(query);
       if (!error && data && data.length > 0) {
         const record = data[0];
         return {

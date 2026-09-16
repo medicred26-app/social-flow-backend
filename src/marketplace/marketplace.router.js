@@ -11,8 +11,13 @@ import {
   setCommissionPercentage,
   createJob,
   getUserJobs,
+  getOpenJobs,
   getJobById,
-  updateJobStatus
+  updateJobStatus,
+  assignFreelancerToJob,
+  createProposal,
+  getProposalsForJob,
+  acceptProposal
 } from './marketplace.db.js';
 
 const router = Router();
@@ -159,19 +164,19 @@ router.post('/admin/settings', async (req, res) => {
   }
 });
 
-// POST Create Job / Project Request
+// POST Create Job / Project Request (direct hire OR open posting)
 router.post('/jobs', async (req, res) => {
   try {
     const { clientId, clientName, clientEmail, freelancerId, title, description, category, budget, deadlineDays } = req.body;
-    if (!clientId || !freelancerId || !title || !description || !budget) {
-      return res.status(400).json({ success: false, error: 'Client ID, Freelancer ID, Title, Description, and Budget are required.' });
+    if (!clientId || !title || !description || !budget) {
+      return res.status(400).json({ success: false, error: 'Client ID, Title, Description, and Budget are required.' });
     }
 
     const job = await createJob({
       client_id: clientId,
       client_name: clientName,
       client_email: clientEmail,
-      freelancer_id: freelancerId,
+      freelancer_id: freelancerId || null, // optional — null = open posting
       title,
       description,
       category,
@@ -180,6 +185,17 @@ router.post('/jobs', async (req, res) => {
     });
 
     res.status(201).json({ success: true, message: 'Job request created successfully.', job });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET Open Job Postings (for freelancers to browse)
+router.get('/jobs/open', async (req, res) => {
+  try {
+    const { category, search } = req.query;
+    const jobs = await getOpenJobs({ category, search });
+    res.json({ success: true, jobs, count: jobs.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -221,6 +237,57 @@ router.patch('/jobs/:id/status', async (req, res) => {
     }
     const updated = await updateJobStatus(req.params.id, status, deliverableNotes);
     res.json({ success: true, message: `Job status updated to ${status}.`, job: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST Submit Proposal on Open Job
+router.post('/jobs/:id/proposals', async (req, res) => {
+  try {
+    const { freelancerUserId, freelancerName, coverLetter, proposedRate } = req.body;
+    if (!freelancerUserId || !coverLetter) {
+      return res.status(400).json({ success: false, error: 'Freelancer user ID and cover letter are required.' });
+    }
+
+    // Resolve freelancer profile UUID from user_id
+    const { getFreelancerByUserId: getFL } = await import('./marketplace.db.js');
+    const flProfile = await getFL(freelancerUserId);
+
+    const proposal = await createProposal({
+      jobId: req.params.id,
+      freelancerUserId,
+      freelancerProfileId: flProfile ? flProfile.id : null,
+      freelancerName: freelancerName || (flProfile ? flProfile.user_name : ''),
+      coverLetter,
+      proposedRate
+    });
+
+    res.status(201).json({ success: true, message: 'Proposal submitted successfully.', proposal });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET Proposals for a Job (client reviews)
+router.get('/jobs/:id/proposals', async (req, res) => {
+  try {
+    const proposals = await getProposalsForJob(req.params.id);
+    res.json({ success: true, proposals, count: proposals.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST Accept a Proposal (client assigns freelancer to job)
+router.post('/jobs/:id/proposals/:propId/accept', async (req, res) => {
+  try {
+    const result = await acceptProposal(req.params.propId, req.params.id);
+    if (result.success) {
+      res.json({ success: true, message: 'Proposal accepted. Freelancer assigned to job.', job: result.job });
+    } else {
+      res.status(404).json({ success: false, error: 'Proposal not found.' });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
