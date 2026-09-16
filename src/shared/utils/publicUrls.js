@@ -1,5 +1,5 @@
 const PROD_FRONTEND = 'https://socialflow-web.onrender.com';
-const PROD_API = 'https://socialflow-api.onrender.com';
+const PROD_API = 'https://socialflow-api-7ulz.onrender.com';
 
 function stripSlash(url) {
   return String(url || '').trim().replace(/\/$/, '');
