@@ -48,5 +48,8 @@ export const AI_CONFIG = {
     return 'https://api.openai.com/v1';
   },
   timeoutMs: 25000,
-  videoTimeoutMs: 180000,
+  videoTimeoutMs: 15000,
+  get mediaEnabled() {
+    return String(process.env.GEMINI_MEDIA_ENABLED || '').toLowerCase() === 'true';
+  },
 };

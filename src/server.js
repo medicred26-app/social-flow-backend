@@ -56,6 +56,7 @@ app.get('/api/health', (req, res) => {
     platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin'],
     googleOauthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.AI_API_KEY),
+    geminiMediaEnabled: String(process.env.GEMINI_MEDIA_ENABLED || '').toLowerCase() === 'true',
   };
 
   try {

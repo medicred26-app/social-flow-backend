@@ -479,6 +479,7 @@ export async function generateGeminiImage({ prompt, aspectRatio = '1:1' }) {
     } catch (err) {
       lastError = err;
       logger.warn(`Image model ${model} failed: ${err.message}`);
+      if (/no video\/image quota|limit: 0|429/i.test(err.message || '')) break;
     }
   }
   throw lastError || new AiApiError('Gemini image generation is not available for this API key.');
@@ -526,6 +527,7 @@ export async function generateGeminiSpeech({ text, language = 'English' }) {
     } catch (err) {
       lastError = err;
       logger.warn(`TTS model ${model} failed: ${err.message}`);
+      if (/no video\/image quota|limit: 0|429/i.test(err.message || '')) break;
     }
   }
   throw lastError || new AiApiError('Gemini speech is not available for this API key.');

@@ -1,4 +1,5 @@
 import { callLlmProvider, generateGeminiImage, generateGeminiSpeech, generateGeminiVideo } from './ai.provider.js';
+import { AI_CONFIG } from './ai.config.js';
 import { createPipelineStages, setPipelineStage } from './ai.stages.js';
 import { createLogger } from '../middleware/logger.js';
 
@@ -191,25 +192,33 @@ export async function runVideoPipeline(input = {}, onProgress = () => {}) {
   const plan = await planScenes(brief);
   complete('plan', `Planned ${plan.scenes.length} scenes. Generating assets...`);
 
-  progress('assets', 'Generating visuals, motion clip, and voiceover...');
-  const [sceneImages, cinematic, speech] = await Promise.all([
-    generateSceneImages(plan, brief.aspectRatio),
-    generateGeminiVideo({
-      prompt: `${plan.title}. ${plan.summary || brief.script}. Style: ${brief.presenter}, ${brief.tone}, ${brief.language}.`,
-      aspectRatio: brief.aspectRatio === '1:1' ? '9:16' : brief.aspectRatio,
-      durationSeconds: Math.min(8, brief.durationSeconds),
-    }).catch((err) => {
-      logger.warn('Cinematic clip unavailable:', err.message);
-      return { error: err.message };
-    }),
-    generateGeminiSpeech({
-      text: plan.voiceoverScript || plan.scenes.map((scene) => scene.voiceover).filter(Boolean).join('. '),
-      language: brief.language,
-    }).catch((err) => {
-      logger.warn('Voiceover skipped:', err.message);
-      return { error: err.message };
-    }),
-  ]);
+  progress('assets', AI_CONFIG.mediaEnabled
+    ? 'Generating visuals, motion clip, and voiceover...'
+    : 'Skipping Veo/image/TTS (no quota). Building a motion storyboard...');
+
+  let sceneImages = [];
+  let cinematic = {};
+  let speech = {};
+  if (AI_CONFIG.mediaEnabled) {
+    [sceneImages, cinematic, speech] = await Promise.all([
+      generateSceneImages(plan, brief.aspectRatio),
+      generateGeminiVideo({
+        prompt: `${plan.title}. ${plan.summary || brief.script}. Style: ${brief.presenter}, ${brief.tone}, ${brief.language}.`,
+        aspectRatio: brief.aspectRatio === '1:1' ? '9:16' : brief.aspectRatio,
+        durationSeconds: Math.min(8, brief.durationSeconds),
+      }).catch((err) => {
+        logger.warn('Cinematic clip unavailable:', err.message);
+        return { error: err.message };
+      }),
+      generateGeminiSpeech({
+        text: plan.voiceoverScript || plan.scenes.map((scene) => scene.voiceover).filter(Boolean).join('. '),
+        language: brief.language,
+      }).catch((err) => {
+        logger.warn('Voiceover skipped:', err.message);
+        return { error: err.message };
+      }),
+    ]);
+  }
 
   const scenes = plan.scenes.map((scene) => {
     const image = sceneImages.find((item) => item.id === scene.id);
@@ -221,13 +230,13 @@ export async function runVideoPipeline(input = {}, onProgress = () => {}) {
 
   const assetNotes = [];
   if (cinematic?.videoUrl) assetNotes.push(`Motion clip: ${cinematic.model}`);
-  else assetNotes.push('Motion clip: storyboard fallback (Veo/Omni quota unavailable)');
+  else assetNotes.push('Motion clip: browser preview reel (Veo skipped — this key has no video quota)');
   if (speech?.audioUrl) assetNotes.push(`Voiceover: ${speech.model}`);
-  else assetNotes.push('Voiceover: on-screen captions (TTS quota unavailable)');
+  else assetNotes.push('Voiceover: on-screen captions');
   if (sceneImages.some((item) => item.imageUrl)) {
     assetNotes.push(`Scene stills: ${sceneImages.filter((item) => item.imageUrl).length}`);
   } else {
-    assetNotes.push('Scene stills: color boards (image quota unavailable)');
+    assetNotes.push('Scene stills: color boards');
   }
   complete('assets', assetNotes.join(' · '));
 
@@ -311,7 +320,7 @@ export async function runVideoPipeline(input = {}, onProgress = () => {}) {
   const mediaType = cinematic?.videoUrl ? 'video' : scenes.some((scene) => scene.imageUrl) ? 'storyboard' : 'storyboard';
   const message = cinematic?.videoUrl
     ? `Pipeline finished with a ${cinematic.model} motion clip. Review, then send to Publisher.`
-    : 'Pipeline finished with a Gemini scene plan and motion storyboard. Review, then send to Publisher.';
+    : 'Gemini planned the scenes. Play the preview reel, then send it to Publisher.';
 
   return {
     provider: cinematic?.model || 'gemini-pipeline',
