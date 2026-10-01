@@ -73,14 +73,22 @@ export function decodeOAuthState(state) {
   }
 }
 
-export function frontendAccountsUrl(req, params) {
+export function frontendPathUrl(req, path, params) {
   const state = decodeOAuthState(req?.query?.state);
   const frontend = stripSlash(state.frontend) || getFrontendUrl(req);
-  const url = new URL('/accounts', `${frontend}/`);
+  const url = new URL(path || '/accounts', `${frontend}/`);
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value));
     }
   });
   return url.toString();
+}
+
+export function frontendAccountsUrl(req, params) {
+  return frontendPathUrl(req, '/accounts', params);
+}
+
+export function frontendDriveUrl(req, params) {
+  return frontendPathUrl(req, '/drive', params);
 }

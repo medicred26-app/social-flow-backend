@@ -49,6 +49,7 @@ export async function saveConnectedAccount(platform, accountData) {
         avatar: accountData.avatar || '',
         followers: accountData.followers || 0,
         access_token: accountData.accessToken || '',
+        refresh_token: accountData.refreshToken || '',
         status: accountData.status || 'connected',
         updated_at: record.updatedAt
       }, { onConflict: 'account_key' });

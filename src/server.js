@@ -7,6 +7,8 @@ import { getLinkedInRedirectUri } from './platforms/linkedin/linkedin.oauth.js';
 import { FACEBOOK_CONFIG } from './platforms/facebook/facebook.config.js';
 import { INSTAGRAM_CONFIG } from './platforms/instagram/instagram.config.js';
 import { YOUTUBE_CONFIG } from './platforms/youtube/youtube.config.js';
+import { DRIVE_CONFIG } from './platforms/drive/drive.config.js';
+import driveRouter from './platforms/drive/drive.router.js';
 import authRoutes from './routes/auth.js';
 import postsRoutes from './routes/posts.js';
 import accountsRoutes from './routes/accounts.js';
@@ -51,9 +53,9 @@ app.get('/api/health', (req, res) => {
   const payload = {
     status: 'online',
     service: 'SocialFlow Backend API Server',
-    version: '2.6.0 (Script-to-publish video pipeline)',
+    version: '2.7.0 (Drive pointers + clip merge)',
     timestamp: new Date().toISOString(),
-    platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin'],
+    platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin', 'drive'],
     googleOauthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.AI_API_KEY),
     geminiMediaEnabled: String(process.env.GEMINI_MEDIA_ENABLED || '').toLowerCase() === 'true',
@@ -66,6 +68,7 @@ app.get('/api/health', (req, res) => {
       facebookRedirect: FACEBOOK_CONFIG.redirectUri,
       instagramRedirect: INSTAGRAM_CONFIG.redirectUri,
       youtubeRedirect: YOUTUBE_CONFIG.redirectUri,
+      driveRedirect: DRIVE_CONFIG.redirectUri,
       xRedirect: getXRedirectUri(),
       linkedinRedirect: getLinkedInRedirectUri(),
       metaAppId: Boolean(FACEBOOK_CONFIG.appId),
@@ -100,6 +103,7 @@ app.use('/api/platforms/instagram', instagramRouter);
 app.use('/api/platforms/youtube', youtubeRouter);
 app.use('/api/platforms/x', xRouter);
 app.use('/api/platforms/linkedin', linkedinRouter);
+app.use('/api/platforms/drive', driveRouter);
 
 // Direct Root Auth Callbacks (e.g. /auth/youtube/callback)
 function forwardQuery(req, path) {
@@ -130,6 +134,13 @@ app.get('/api/oauth/youtube/callback', (req, res) => {
 });
 app.get('/api/oauth/instagram/callback', (req, res) => {
   res.redirect(forwardQuery(req, '/api/platforms/instagram/oauth/callback'));
+});
+app.get('/auth/drive', (req, res) => res.redirect(forwardQuery(req, '/api/platforms/drive/oauth')));
+app.get('/auth/drive/callback', (req, res) => {
+  res.redirect(forwardQuery(req, '/api/platforms/drive/oauth/callback'));
+});
+app.get('/api/oauth/drive/callback', (req, res) => {
+  res.redirect(forwardQuery(req, '/api/platforms/drive/oauth/callback'));
 });
 
 app.use((req, res) => {
