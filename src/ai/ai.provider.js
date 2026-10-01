@@ -1,5 +1,6 @@
 import { AI_CONFIG } from './ai.config.js';
 import { storeGeneratedMedia } from './ai.jobs.js';
+import { getRequestApiKey, getStoredClientKey, getVideoTimeoutMs } from './ai.keys.js';
 import { createLogger } from '../middleware/logger.js';
 
 const logger = createLogger('AIProvider');
@@ -20,11 +21,15 @@ export class AiApiError extends Error {
 }
 
 function requireApiKey() {
-  const apiKey = AI_CONFIG.apiKey;
+  const apiKey = getRequestApiKey() || getStoredClientKey() || AI_CONFIG.apiKey;
   if (!apiKey || apiKey.includes('your-') || apiKey === 'YOUR_AI_API_KEY') {
-    throw new AiConfigError('Gemini is not configured. Add GEMINI_API_KEY to backend/.env.');
+    throw new AiConfigError('Add a Gemini API key in Videos → Generate, or set GEMINI_API_KEY on the server.');
   }
   return apiKey;
+}
+
+function usingClientKey() {
+  return Boolean(getRequestApiKey() || getStoredClientKey());
 }
 
 function parseJsonContent(content) {
@@ -200,7 +205,12 @@ async function callOpenAiCompatible({ systemPrompt, userPrompt, responseFormat =
 function mapHttpError(status, raw = '') {
   const detail = readErrorMessage(raw);
   if (status === 401 || status === 403) {
-    return new AiApiError('Invalid GEMINI_API_KEY. Check the key in backend/.env.', status);
+    return new AiApiError(
+      usingClientKey()
+        ? 'This Gemini API key was rejected. Create a new key in Google AI Studio and paste it again.'
+        : 'Invalid GEMINI_API_KEY. Check the key in backend/.env.',
+      status
+    );
   }
   if (status === 429) {
     if (/limit: 0|free_tier/i.test(detail)) {
@@ -257,7 +267,7 @@ async function downloadGeminiFile(uriOrId) {
   const fileId = raw.match(/files\/([^/:?]+)/)?.[1] || raw.replace(/^files\//, '');
   if (!fileId) throw new AiApiError('Generated video did not include a file id.');
 
-  const deadline = Date.now() + AI_CONFIG.videoTimeoutMs;
+  const deadline = Date.now() + getVideoTimeoutMs(AI_CONFIG.videoTimeoutMs);
   while (Date.now() < deadline) {
     const infoRes = await geminiFetch(`/files/${fileId}`);
     const info = await infoRes.json().catch(() => ({}));
@@ -313,7 +323,7 @@ async function generateOmniVideo({ prompt, aspectRatio, durationSeconds }) {
 
       let data = JSON.parse(startText);
       const interactionId = data.id;
-      const deadline = Date.now() + AI_CONFIG.videoTimeoutMs;
+      const deadline = Date.now() + getVideoTimeoutMs(AI_CONFIG.videoTimeoutMs);
       while (data.status && !['completed', 'failed', 'cancelled'].includes(data.status) && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 4000));
         const poll = await geminiFetch(`/interactions/${encodeURIComponent(interactionId)}`);
@@ -404,7 +414,7 @@ async function generateVeoVideo({ prompt, aspectRatio, durationSeconds }) {
         continue;
       }
 
-      const deadline = Date.now() + AI_CONFIG.videoTimeoutMs;
+      const deadline = Date.now() + getVideoTimeoutMs(AI_CONFIG.videoTimeoutMs);
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 4000));
         const poll = await geminiFetch(`/${operationName}`);

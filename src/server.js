@@ -22,6 +22,7 @@ import aiRouter from './ai/ai.router.js';
 import marketplaceRouter from './marketplace/marketplace.router.js';
 
 import libraryRoutes from './routes/library.js';
+import mediaRoutes from './routes/media.js';
 import servicesRoutes from './routes/services.js';
 import projectsRoutes from './routes/projects.js';
 
@@ -53,7 +54,8 @@ app.get('/api/health', (req, res) => {
   const payload = {
     status: 'online',
     service: 'SocialFlow Backend API Server',
-    version: '2.7.0 (Drive pointers + clip merge)',
+    version: '2.8.0 (Drive + BYOK generate + upload)',
+    videoMethods: ['drive_pointer', 'client_api_key', 'direct_upload'],
     timestamp: new Date().toISOString(),
     platforms: ['facebook', 'instagram', 'youtube', 'x', 'linkedin', 'drive'],
     googleOauthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
@@ -92,6 +94,7 @@ app.use('/api/ai', (req, res, next) => {
   next();
 }, aiRouter);
 app.use('/api/library', libraryRoutes);
+app.use('/api/media', mediaRoutes);
 app.use('/api/services', servicesRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/marketplace', marketplaceRouter);

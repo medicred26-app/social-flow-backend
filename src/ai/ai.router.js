@@ -1,8 +1,16 @@
 import express from 'express';
 import { aiService } from './ai.service.js';
-import { AiConfigError, AiApiError, proxyGeminiMedia } from './ai.provider.js';
+import { AiConfigError, generateGeminiVideo, proxyGeminiMedia } from './ai.provider.js';
 import { AI_CONFIG } from './ai.config.js';
 import { createVideoJob, getGeneratedMedia, getVideoJob, updateVideoJob } from './ai.jobs.js';
+import {
+  clearClientApiKey,
+  getClientKeyStatus,
+  resolveClientApiKey,
+  runWithClientKey,
+  saveClientApiKey,
+  validateVideoPrompt,
+} from './ai.keys.js';
 
 const router = express.Router();
 
@@ -14,15 +22,37 @@ function sendAiError(res, err) {
   });
 }
 
-router.get('/status', (_req, res) => {
+router.get('/status', async (_req, res) => {
+  const clientKey = await getClientKeyStatus();
   res.json({
     success: true,
-    configured: Boolean(AI_CONFIG.apiKey),
+    configured: Boolean(AI_CONFIG.apiKey) || clientKey.configured,
     provider: AI_CONFIG.provider,
     model: AI_CONFIG.model,
     imageModel: AI_CONFIG.imageModel,
     videoModel: AI_CONFIG.videoModel,
+    clientKey,
   });
+});
+
+router.get('/keys/status', async (_req, res) => {
+  res.json({ success: true, ...(await getClientKeyStatus()) });
+});
+
+router.post('/keys', async (req, res) => {
+  const result = await saveClientApiKey(req.body?.apiKey);
+  if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+  res.json({
+    success: true,
+    configured: true,
+    masked: result.masked,
+    message: 'Saved your Gemini API key. SocialFlow will use it only to generate media for this workspace.',
+  });
+});
+
+router.delete('/keys', async (_req, res) => {
+  await clearClientApiKey();
+  res.json({ success: true, configured: false, message: 'Removed the saved Gemini API key.' });
 });
 
 router.get('/media/proxy', async (req, res) => {
@@ -69,6 +99,49 @@ router.post('/enhance-post', async (req, res) => {
   try {
     const data = await aiService.enhancePost(req.body || {});
     res.json({ success: true, data });
+  } catch (err) {
+    sendAiError(res, err);
+  }
+});
+
+router.post('/video/generate-direct', async (req, res) => {
+  try {
+    const parsed = validateVideoPrompt(req.body?.prompt || req.body?.script);
+    if (!parsed.ok) return res.status(400).json({ success: false, error: parsed.error });
+    const apiKey = await resolveClientApiKey(req.body?.apiKey);
+    const jobId = createVideoJob();
+    res.json({
+      success: true,
+      jobId,
+      status: 'queued',
+      method: 'client_api_key',
+      message: 'Starting Veo on your Gemini API key...',
+    });
+    setImmediate(async () => {
+      try {
+        updateVideoJob(jobId, { status: 'running', message: 'Your Gemini key is generating the video...' });
+        const data = await runWithClientKey(
+          apiKey,
+          () => generateGeminiVideo({
+            prompt: parsed.prompt,
+            aspectRatio: req.body?.aspectRatio || '9:16',
+            durationSeconds: Number(req.body?.durationSeconds) || 8,
+          }),
+          { videoTimeoutMs: 180000 }
+        );
+        updateVideoJob(jobId, {
+          status: 'done',
+          result: {
+            ...data,
+            method: 'client_api_key',
+            storedVideos: true,
+            message: 'Video generated with your API key. SocialFlow stored the result for preview and publish.',
+          },
+        });
+      } catch (err) {
+        updateVideoJob(jobId, { status: 'error', error: err.message || 'Direct video generation failed.' });
+      }
+    });
   } catch (err) {
     sendAiError(res, err);
   }
